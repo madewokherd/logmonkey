@@ -108,17 +108,97 @@ def cli_main(argv):
     
     logged_session.outfile = sys.stdout
     
-    logged_session.write("## Command: %s\n" % ' '.join(repr(x) for x in argv))
+    logged_session.write("## Command: %s\n" % ' '.join(repr(x) for x in argv[1:]))
 
     dump_env(os.environ, logged_session)
     
     logged_session.write("## Starting process...\n")
 
-    logged_process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    logged_process = subprocess.Popen(argv[1:], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     logged_session.set_process(logged_process)
     
     logged_session.wait()
 
-cli_main(sys.argv[1:])
+
+
+# BEGIN PYGTK-SPECIFIC CODE
+
+import threading
+import time
+
+import gobject
+
+gobject.threads_init()
+
+import gtk
+
+gtk.gdk.threads_init()
+
+
+class SpinnyLoggedSession(gtk.Dialog, LoggedSession):
+    def __init__(self, *args, **kwargs):
+        gtk.Window.__init__(self, *args, **kwargs)
+        LoggedSession.__init__(self)
+
+        self.set_property('focus-on-map', False)
+
+        self.label = gtk.Label()
+        self.label.show()
+        self.vbox.add(self.label)
+
+        self.progress = gtk.ProgressBar()
+        self.progress.show()
+        self.vbox.add(self.progress)
+
+        self.add_button('Stop Logging', gtk.RESPONSE_CLOSE)
+
+        self.last_spin_time = time.time()
+
+    def set_label(self, str):
+        self.label.set_label(str)
+
+    def spin(self):
+        if time.time() - self.last_spin_time >= 0.2:
+            gobject.idle_add(self.progress.pulse)
+            self.last_spin_time = time.time()
+
+    def _thread_proc(self, args):
+        self.outfile = sys.stdout
+        
+        self.write("## Command: %s\n" % ' '.join(repr(x) for x in args))
+
+        dump_env(os.environ, self)
+        
+        self.write("## Starting process...\n")
+
+        self.set_label("Starting process")
+
+        logged_process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        self.set_process(logged_process)
+
+        self.set_label("Waiting for process to close")
+        
+        self.wait()
+
+        self.response(gtk.RESPONSE_CLOSE)
+
+    def run(self, args):
+        self.thread = threading.Thread(target=self._thread_proc, args=(args,))
+        self.thread.start()
+
+        gtk.Dialog.run(self)
+
+def pygtk_main(argv):
+    logged_session = SpinnyLoggedSession()
+
+    logged_session.run(argv[1:])
+
+
+
+main = pygtk_main
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
 
